@@ -1,4 +1,6 @@
 import streamlit as st
+import json
+from openai import OpenAI
 
 # Set up page configuration
 st.set_page_config(
@@ -10,6 +12,11 @@ st.set_page_config(
 # Application Title & Subtitle
 st.title("🔍 Pipeline Reality Checker")
 st.caption("Identify at-risk sales deals using structural logic and contextual AI.")
+
+# Sidebar for API Key configuration (Secure & Flexible)
+st.sidebar.header("🔑 API Configuration")
+openai_api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
+st.sidebar.markdown("[Get an API Key here](https://platform.openai.com/api-keys)")
 
 # Initialize tab navigation
 tab1, tab2 = st.tabs(["📊 Deal Analysis Engine", "🛡️ Admin Dashboard"])
@@ -51,40 +58,101 @@ with tab1:
         else:
             st.success(f"✅ Input Validated Successfully for '{deal_name}'!")
             
-            # --- COMMIT 3: PRE-AI DETERMINISTIC LOGIC LAYER ---
+            # --- LAYER 1: PRE-AI DETERMINISTIC LOGIC ---
             st.markdown("---")
             st.subheader("⚙️ Layer 1: Deterministic Data Processing (Pre-AI)")
             
-            # Define hard operational thresholds
-            ACTIVITY_THRESHOLD = 14  # Max allowed days of silence
-            STAGNATION_THRESHOLD = 30 # Max allowed days without stage progression
+            ACTIVITY_THRESHOLD = 14
+            STAGNATION_THRESHOLD = 30
             
             logic_flags = []
             is_stale_activity = days_since_activity > ACTIVITY_THRESHOLD
             is_stagnant_stage = days_in_stage > STAGNATION_THRESHOLD
             
-            # Evaluate rules
             if is_stale_activity:
-                logic_flags.append(f"🚨 LOW ACTIVITY: No updates in {days_since_activity} days (Threshold: {ACTIVITY_THRESHOLD} days).")
+                logic_flags.append(f"LOW ACTIVITY: No updates in {days_since_activity} days.")
             if is_stagnant_stage:
-                logic_flags.append(f"🚨 STAGE STAGNATION: Stuck in '{deal_stage}' for {days_in_stage} days (Threshold: {STAGNATION_THRESHOLD} days).")
+                logic_flags.append(f"STAGE STAGNATION: Stuck in '{deal_stage}' for {days_in_stage} days.")
                 
-            # Render Logic Layer Findings
             col_l1, col_l2 = st.columns(2)
             with col_l1:
-                st.metric(label="Days Since Activity Status", value=f"{days_since_activity} Days", delta=f"{days_since_activity - ACTIVITY_THRESHOLD} Over limit" if is_stale_activity else "Safe", delta_color="inverse")
+                st.metric(label="Days Since Activity Status", value=f"{days_since_activity} Days", delta=f"{days_since_activity - ACTIVITY_THRESHOLD} Over" if is_stale_activity else "Safe", delta_color="inverse")
             with col_l2:
-                st.metric(label="Stage Stagnation Status", value=f"{days_in_stage} Days", delta=f"{days_in_stage - STAGNATION_THRESHOLD} Over limit" if is_stagnant_stage else "Safe", delta_color="inverse")
-                
-            if logic_flags:
-                st.warning("⚠️ **Deterministic Risk Flags Triggered:**")
-                for flag in logic_flags:
-                    st.write(flag)
-            else:
-                st.info("💚 **Deterministic Check:** Metrics are within normal operating bounds. Proceeding to contextual verification...")
+                st.metric(label="Stage Stagnation Status", value=f"{days_in_stage} Days", delta=f"{days_in_stage - STAGNATION_THRESHOLD} Over" if is_stagnant_stage else "Safe", delta_color="inverse")
             
-            # Temporary placeholder for Commit 4
-            st.info("⏭️ Logic calculations completed. Ready for Layer 2: Contextual AI Prompt Construction.")
+            logic_summary = ", ".join(logic_flags) if logic_flags else "No hard thresholds breached."
+            
+            # --- COMMIT 4: LAYER 2: CONTEXTUAL AI LAYER ---
+            st.markdown("---")
+            st.subheader("🤖 Layer 2: Contextual AI Analysis")
+            
+            if not openai_api_key:
+                st.warning("🔒 AI Analysis Paused: Please enter an OpenAI API Key in the sidebar to run the contextual risk analysis.")
+            else:
+                with st.spinner("AI is analyzing deal context and evaluating risks..."):
+                    try:
+                        # Initialize client
+                        client = OpenAI(api_key=openai_api_key)
+                        
+                        # Structured Prompt Construction
+                        system_prompt = (
+                            "You are an expert B2B Sales Operations Auditor. Your job is to analyze sales deals for hidden risks.\n"
+                            "You must return your response as a strict JSON object with exactly these keys:\n"
+                            "{\n"
+                            "  \"deal_status\": \"Healthy\" or \"At Risk\" or \"Slipped\",\n"
+                            "  \"risk_reason\": \"A concise, data-backed summary sentence explaining the core structural or conversational risk structural reason.\",\n"
+                            "  \"next_action\": \"One explicit, tactical, highly prescriptive micro-action for the sales manager to execute immediately.\",\n"
+                            "  \"confidence_score\": <an integer between 0 and 100 representing your analysis certainty based strictly on evidence>\n"
+                            "}\n"
+                            "Crucial: Base your evaluation on the alignment between the quantitative logic metrics and the subjective notes. "
+                            "Do not hallucinate facts. If notes are vague, keep your confidence score low."
+                        )
+                        
+                        user_content = (
+                            f"Deal Name: {deal_name}\n"
+                            f"Current Stage: {deal_stage}\n"
+                            f"Deal Size: ${deal_size:,}\n"
+                            f"Days Since Last Activity: {days_since_activity}\n"
+                            f"Days in Current Stage: {days_in_stage}\n"
+                            f"Pre-AI Logic Flag Status: {logic_summary}\n"
+                            f"Sales Rep Activity Notes:\n\"\"\"\n{sales_notes}\n\"\"\""
+                        )
+                        
+                        # API Call (Fulfilling the real LLM requirement)
+                        response = client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_content}
+                            ],
+                            response_format={"type": "json_object"},
+                            temperature=0.2
+                        )
+                        
+                        # Output Parsing (No raw JSON displayed to user)
+                        ai_result = json.loads(response.choices[0].message.content)
+                        
+                        # Render Clean UI Components
+                        status = ai_result.get("deal_status", "At Risk")
+                        confidence = ai_result.get("confidence_score", 80)
+                        
+                        col_out1, col_out2 = st.columns(2)
+                        with col_out1:
+                            if status == "Healthy":
+                                st.success(f"🟢 **AI Risk Rating:** {status}")
+                            elif status == "At Risk":
+                                st.warning(f"🟡 **AI Risk Rating:** {status}")
+                            else:
+                                st.error(f"🔴 **AI Risk Rating:** {status}")
+                        
+                        with col_out2:
+                            st.metric(label="AI Confidence Score", value=f"{confidence}%")
+                            
+                        st.info(f"**Risk Diagnosis:** {ai_result.get('risk_reason')}")
+                        st.success(f"🎯 **Suggested Next Action:** {ai_result.get('next_action')}")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error during API Call: {str(e)}")
 
 with tab2:
     st.subheader("🛡️ System Administration & History")
