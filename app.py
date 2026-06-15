@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from openai import OpenAI
 
 # Set up page configuration
@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- COMMIT 5: DATABASE INITIALIZATION ---
+# Database Initialization Layer
 def init_db():
     conn = sqlite3.connect("pipeline_data.db")
     cursor = conn.cursor()
@@ -33,19 +33,18 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize the database layout
 init_db()
 
-# Application Title
+# Application Headers
 st.title("🔍 Pipeline Reality Checker")
 st.caption("Identify at-risk sales deals using structural logic and contextual AI.")
 
-# Sidebar for API Key configuration
+# Sidebar Configuration
 st.sidebar.header("🔑 API Configuration")
 openai_api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
 st.sidebar.markdown("[Get an API Key here](https://platform.openai.com/api-keys)")
 
-# Initialize tab navigation
+# Initialize Tabs
 tab1, tab2 = st.tabs(["📊 Deal Analysis Engine", "🛡️ Admin Dashboard"])
 
 with tab1:
@@ -69,7 +68,7 @@ with tab1:
             
         sales_notes = st.text_area(
             "Sales Rep Notes & Activity Log", 
-            placeholder="Paste the latest updates, email summaries, or notes from your 1-on-1 conversations here...",
+            placeholder="Paste the latest updates, email summaries, or notes...",
             height=150
         )
         
@@ -92,20 +91,26 @@ with tab1:
             
             logic_flags = []
             is_stale_activity = days_since_activity > ACTIVITY_THRESHOLD
-            is_stagnant_stage = days_in_stage > STAGNATION_THRESHOLD
+            is_stale_stage = days_in_stage > STAGNATION_THRESHOLD
             
             if is_stale_activity:
                 logic_flags.append(f"LOW ACTIVITY: No updates in {days_since_activity} days.")
-            if is_stagnant_stage:
+            if is_stale_stage:
                 logic_flags.append(f"STAGE STAGNATION: Stuck in '{deal_stage}' for {days_in_stage} days.")
                 
             col_l1, col_l2 = st.columns(2)
             with col_l1:
                 st.metric(label="Days Since Activity Status", value=f"{days_since_activity} Days", delta=f"{days_since_activity - ACTIVITY_THRESHOLD} Over" if is_stale_activity else "Safe", delta_color="inverse")
             with col_l2:
-                st.metric(label="Stage Stagnation Status", value=f"{days_in_stage} Days", delta=f"{days_in_stage - STAGNATION_THRESHOLD} Over" if is_stagnant_stage else "Safe", delta_color="inverse")
+                st.metric(label="Stage Stagnation Status", value=f"{days_in_stage} Days", delta=f"{days_in_stage - STAGNATION_THRESHOLD} Over" if is_stale_stage else "Safe", delta_color="inverse")
             
             logic_summary = ", ".join(logic_flags) if logic_flags else "No hard thresholds breached."
+            
+            if logic_flags:
+                st.warning("⚠️ **Deterministic Risk Flags Triggered:**")
+                for flag in logic_flags: st.write(f"- {flag}")
+            else:
+                st.info("💚 **Deterministic Check:** Metrics are within normal operating bounds.")
             
             # Layer 2: AI Check
             st.markdown("---")
@@ -147,7 +152,6 @@ with tab1:
                         diagnosis = ai_result.get("risk_reason", "")
                         action = ai_result.get("next_action", "")
                         
-                        # Render Results
                         col_out1, col_out2 = st.columns(2)
                         with col_out1:
                             if status == "Healthy": st.success(f"🟢 **AI Risk Rating:** {status}")
@@ -159,7 +163,7 @@ with tab1:
                         st.info(f"**Risk Diagnosis:** {diagnosis}")
                         st.success(f"🎯 **Suggested Next Action:** {action}")
                         
-                        # --- COMMIT 5: SAVE EXECUTION TO DATABASE ---
+                        # Save to Database
                         conn = sqlite3.connect("pipeline_data.db")
                         cursor = conn.cursor()
                         cursor.execute("""
@@ -173,10 +177,36 @@ with tab1:
                     except Exception as e:
                         st.error(f"❌ Error during API Call: {str(e)}")
 
-# --- COMMIT 5: ADMIN DASHBOARD DISPLAY ---
+# Admin Dashboard
 with tab2:
     st.subheader("🛡️ System Administration & History Log")
     st.write("Review all historically audited sales deals stored inside the local database storage layers.")
+    
+    # --- COMMIT 6: MOCK PRODUCTION DATA SEED ENGINE ---
+    st.markdown("### 🛠️ Developer Testing Utilities")
+    if st.button("🚀 Seed Mock Production Data Suite"):
+        try:
+            conn = sqlite3.connect("pipeline_data.db")
+            cursor = conn.cursor()
+            
+            mock_deals = [
+                ((datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"), "Stark Industries Supply Contract", "Negotiation", 150000.0, 22, 45, "At Risk", 95, "Procurement point of contact stopped returning calls; massive structural stagnation flag matched with radio silence.", "Schedule an emergency alignment sync with their technical champion directly."),
+                ((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"), "Wayne Enterprises Core Integration", "Contracting", 320000.0, 2, 4, "Healthy", 88, "Activity metrics are tight and verbal commitment on legal redlines is confirmed in recent notes.", "Send finalized docu-sign package to legal department operations head."),
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Oscorp Biotech Pilot Project", "Discovery", 15000.0, 1, 35, "Slipped", 75, "Deal size doesn't match baseline criteria and discovery phase has outlasted typical conversion curves.", "Move record out of active pipeline and re-assign to lower-tier nurturing cadence.")
+            ]
+            
+            cursor.executemany("""
+                INSERT INTO deal_history (timestamp, deal_name, stage, size, days_activity, days_stagnant, ai_status, ai_confidence, ai_diagnosis, ai_action)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, mock_deals)
+            conn.commit()
+            conn.close()
+            st.success("🎉 Production mock data suite successfully seeded into pipeline_data.db! Refreshing items below...")
+        except Exception as e:
+            st.error(f"Failed to seed mock data: {e}")
+            
+    st.markdown("---")
+    st.markdown("### 📊 Historical Logs")
     
     try:
         conn = sqlite3.connect("pipeline_data.db")
@@ -192,6 +222,6 @@ with tab2:
                     st.write(f"**AI Evaluation Status:** {row[4]} (Confidence: {row[5]}%)")
                     st.write(f"**Prescribed Action:** {row[6]}")
         else:
-            st.info("No historical audits saved yet. Run an analysis on a deal to populate the system database logs.")
+            st.info("No historical audits saved yet. Click the 'Seed Mock Production Data Suite' button above to quickly test layout visuals.")
     except Exception as e:
         st.error(f"Failed to load database logs: {e}")
