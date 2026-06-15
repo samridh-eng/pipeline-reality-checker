@@ -1,5 +1,7 @@
 import streamlit as st
 import json
+import sqlite3
+from datetime import datetime
 from openai import OpenAI
 
 # Set up page configuration
@@ -9,11 +11,36 @@ st.set_page_config(
     layout="wide"
 )
 
-# Application Title & Subtitle
+# --- COMMIT 5: DATABASE INITIALIZATION ---
+def init_db():
+    conn = sqlite3.connect("pipeline_data.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS deal_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            deal_name TEXT,
+            stage TEXT,
+            size REAL,
+            days_activity INTEGER,
+            days_stagnant INTEGER,
+            ai_status TEXT,
+            ai_confidence INTEGER,
+            ai_diagnosis TEXT,
+            ai_action TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+# Initialize the database layout
+init_db()
+
+# Application Title
 st.title("🔍 Pipeline Reality Checker")
 st.caption("Identify at-risk sales deals using structural logic and contextual AI.")
 
-# Sidebar for API Key configuration (Secure & Flexible)
+# Sidebar for API Key configuration
 st.sidebar.header("🔑 API Configuration")
 openai_api_key = st.sidebar.text_input("Enter OpenAI API Key", type="password")
 st.sidebar.markdown("[Get an API Key here](https://platform.openai.com/api-keys)")
@@ -25,7 +52,6 @@ with tab1:
     st.subheader("Analyze a Deal")
     st.write("Enter the deal details below to evaluate true conversion risks.")
     
-    # Create the structured input form
     with st.form(key="deal_input_form"):
         col1, col2 = st.columns(2)
         
@@ -49,16 +75,15 @@ with tab1:
         
         submit_button = st.form_submit_button(label="Run Reality Check")
 
-    # Processing Layer
     if submit_button:
         if not deal_name.strip():
             st.error("⚠️ Validation Error: Deal Name cannot be empty.")
         elif not sales_notes.strip() or len(sales_notes.strip()) < 15:
-            st.error("⚠️ Validation Error: Please provide detailed sales notes (at least 15 characters) for the AI contextual layer to analyze.")
+            st.error("⚠️ Validation Error: Please provide detailed sales notes (at least 15 characters).")
         else:
             st.success(f"✅ Input Validated Successfully for '{deal_name}'!")
             
-            # --- LAYER 1: PRE-AI DETERMINISTIC LOGIC ---
+            # Layer 1: Logic Check
             st.markdown("---")
             st.subheader("⚙️ Layer 1: Deterministic Data Processing (Pre-AI)")
             
@@ -82,43 +107,30 @@ with tab1:
             
             logic_summary = ", ".join(logic_flags) if logic_flags else "No hard thresholds breached."
             
-            # --- COMMIT 4: LAYER 2: CONTEXTUAL AI LAYER ---
+            # Layer 2: AI Check
             st.markdown("---")
             st.subheader("🤖 Layer 2: Contextual AI Analysis")
             
             if not openai_api_key:
-                st.warning("🔒 AI Analysis Paused: Please enter an OpenAI API Key in the sidebar to run the contextual risk analysis.")
+                st.warning("🔒 AI Analysis Paused: Please enter an OpenAI API Key in the sidebar.")
             else:
-                with st.spinner("AI is analyzing deal context and evaluating risks..."):
+                with st.spinner("AI is analyzing deal context..."):
                     try:
-                        # Initialize client
                         client = OpenAI(api_key=openai_api_key)
                         
-                        # Structured Prompt Construction
                         system_prompt = (
                             "You are an expert B2B Sales Operations Auditor. Your job is to analyze sales deals for hidden risks.\n"
                             "You must return your response as a strict JSON object with exactly these keys:\n"
                             "{\n"
                             "  \"deal_status\": \"Healthy\" or \"At Risk\" or \"Slipped\",\n"
-                            "  \"risk_reason\": \"A concise, data-backed summary sentence explaining the core structural or conversational risk structural reason.\",\n"
+                            "  \"risk_reason\": \"A concise, data-backed summary sentence explaining the core structural or conversational risk factor.\",\n"
                             "  \"next_action\": \"One explicit, tactical, highly prescriptive micro-action for the sales manager to execute immediately.\",\n"
-                            "  \"confidence_score\": <an integer between 0 and 100 representing your analysis certainty based strictly on evidence>\n"
+                            "  \"confidence_score\": <an integer between 0 and 100>\n"
                             "}\n"
-                            "Crucial: Base your evaluation on the alignment between the quantitative logic metrics and the subjective notes. "
-                            "Do not hallucinate facts. If notes are vague, keep your confidence score low."
                         )
                         
-                        user_content = (
-                            f"Deal Name: {deal_name}\n"
-                            f"Current Stage: {deal_stage}\n"
-                            f"Deal Size: ${deal_size:,}\n"
-                            f"Days Since Last Activity: {days_since_activity}\n"
-                            f"Days in Current Stage: {days_in_stage}\n"
-                            f"Pre-AI Logic Flag Status: {logic_summary}\n"
-                            f"Sales Rep Activity Notes:\n\"\"\"\n{sales_notes}\n\"\"\""
-                        )
+                        user_content = f"Deal Name: {deal_name}\nStage: {deal_stage}\nSize: ${deal_size}\nDays Activity: {days_since_activity}\nDays Stagnant: {days_in_stage}\nLogic Flags: {logic_summary}\nNotes: {sales_notes}"
                         
-                        # API Call (Fulfilling the real LLM requirement)
                         response = client.chat.completions.create(
                             model="gpt-4o-mini",
                             messages=[
@@ -129,31 +141,57 @@ with tab1:
                             temperature=0.2
                         )
                         
-                        # Output Parsing (No raw JSON displayed to user)
                         ai_result = json.loads(response.choices[0].message.content)
-                        
-                        # Render Clean UI Components
                         status = ai_result.get("deal_status", "At Risk")
                         confidence = ai_result.get("confidence_score", 80)
+                        diagnosis = ai_result.get("risk_reason", "")
+                        action = ai_result.get("next_action", "")
                         
+                        # Render Results
                         col_out1, col_out2 = st.columns(2)
                         with col_out1:
-                            if status == "Healthy":
-                                st.success(f"🟢 **AI Risk Rating:** {status}")
-                            elif status == "At Risk":
-                                st.warning(f"🟡 **AI Risk Rating:** {status}")
-                            else:
-                                st.error(f"🔴 **AI Risk Rating:** {status}")
-                        
+                            if status == "Healthy": st.success(f"🟢 **AI Risk Rating:** {status}")
+                            elif status == "At Risk": st.warning(f"🟡 **AI Risk Rating:** {status}")
+                            else: st.error(f"🔴 **AI Risk Rating:** {status}")
                         with col_out2:
                             st.metric(label="AI Confidence Score", value=f"{confidence}%")
                             
-                        st.info(f"**Risk Diagnosis:** {ai_result.get('risk_reason')}")
-                        st.success(f"🎯 **Suggested Next Action:** {ai_result.get('next_action')}")
+                        st.info(f"**Risk Diagnosis:** {diagnosis}")
+                        st.success(f"🎯 **Suggested Next Action:** {action}")
+                        
+                        # --- COMMIT 5: SAVE EXECUTION TO DATABASE ---
+                        conn = sqlite3.connect("pipeline_data.db")
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO deal_history (timestamp, deal_name, stage, size, days_activity, days_stagnant, ai_status, ai_confidence, ai_diagnosis, ai_action)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), deal_name, deal_stage, float(deal_size), int(days_since_activity), int(days_in_stage), status, int(confidence), diagnosis, action))
+                        conn.commit()
+                        conn.close()
+                        st.caption("💾 Analysis successfully saved to system historical logs.")
                         
                     except Exception as e:
                         st.error(f"❌ Error during API Call: {str(e)}")
 
+# --- COMMIT 5: ADMIN DASHBOARD DISPLAY ---
 with tab2:
-    st.subheader("🛡️ System Administration & History")
-    st.info("The Admin Dashboard will display saved historical data once database persistence is active.")
+    st.subheader("🛡️ System Administration & History Log")
+    st.write("Review all historically audited sales deals stored inside the local database storage layers.")
+    
+    try:
+        conn = sqlite3.connect("pipeline_data.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT timestamp, deal_name, stage, size, ai_status, ai_confidence, ai_action FROM deal_history ORDER BY id DESC")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if rows:
+            for row in rows:
+                with st.expander(f"🕒 {row[0]} | {row[1]} (${row[3]:,})"):
+                    st.write(f"**Pipeline Stage:** {row[2]}")
+                    st.write(f"**AI Evaluation Status:** {row[4]} (Confidence: {row[5]}%)")
+                    st.write(f"**Prescribed Action:** {row[6]}")
+        else:
+            st.info("No historical audits saved yet. Run an analysis on a deal to populate the system database logs.")
+    except Exception as e:
+        st.error(f"Failed to load database logs: {e}")
